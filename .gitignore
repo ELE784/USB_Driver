@@ -4,6 +4,7 @@
 # But not these files
 !.gitignore
 !usbcam.c
+!usbcam.h
 !usbvideo.h
 !dht_data.h
 !Makefile
