@@ -43,14 +43,7 @@ static ssize_t usbcam_write(struct file *filp, const char __user *ubuf, size_t c
 static long usbcam_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
 struct usbcam_dev {
-  struct usb_device *usbdev;
-  struct usb_interface *usbinterfaces;
-  unsigned char *bulk_in_buffer;
-  size_t bulk_in_size;
-  __u8 bulk_in_endpointAddr; /* the address of the bulk in endpoint */
-  __u8 bulk_out_endpointAddr;  /* the address of the bulk out endpoint */
-  struct kref kref;
-  struct semaphore usbSem;
+  struct usb_device *udev;
 };
 
 static struct usb_device_id usbcam_table[] = {

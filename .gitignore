@@ -7,6 +7,8 @@
 !usbcam.h
 !usbvideo.h
 !dht_data.h
+!application.c
+!cmd.h
 !Makefile
 
 # ...even if they are in subdirectories

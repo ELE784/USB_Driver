@@ -10,8 +10,6 @@
 #include "usbvideo.h"
 #include "dht_data.h"
 
-#define __DEBUG__
-
 // Module Information
 MODULE_AUTHOR("Francis Masse, Alexandre Leblanc");
 MODULE_LICENSE("Dual BSD/GPL");
@@ -22,141 +20,90 @@ MODULE_LICENSE("Dual BSD/GPL");
 static int urbInit(struct urb *urb, struct usb_interface *intf);
 static void urbCompletionCallback(struct urb *urb);
 
-
-//static unsigned int myStatus;
-//static unsigned int myLength;
-//static unsigned int myLengthUsed;
-//static char * myData;
-//static struct urb *myUrb[5];
-
-// **************************** //
-// ***** Helper functions ***** //
-// **************************** //
-
-static void usbcam_delete(struct kref *kref)
-{
-  struct usbcam_dev *dev = container_of(kref, struct usbcam_dev, kref);
-
-  usb_put_dev(dev->usbdev);
-  kfree (dev->bulk_in_buffer);
-  kfree (dev);
-}
-
-static struct usbcam_dev usbcam;
+static unsigned int myStatus = 0;
+static unsigned int myLength = 42666;
+static unsigned int myLengthUsed = 0;
+static char *myData;
+static struct urb *myUrb[5];
+static struct completion submit_urb;
 
 static int __init usbcam_init(void)
 {
   int result;
 
   result = usb_register(&usbcam_driver);
-#ifdef __DEBUG__
+
   if(result)
     printk(KERN_WARNING "usb_register failed. Error number %d", result);
-#endif
 
-  sema_init(&usbcam.usbSem, 1);
+  init_completion(&submit_urb);
 
-#ifdef __DEBUG__
   printk(KERN_WARNING "====================================================\n");
   printk(KERN_WARNING "====================================================\n");
   printk(KERN_WARNING "                Device initialized\n");
   printk(KERN_WARNING "====================================================\n");
   printk(KERN_WARNING "====================================================\n");
-#endif
 
-  return 0;
+  return result;
 }
 
 static void __exit usbcam_exit(void)
 {
   usb_deregister(&usbcam_driver);
 
-#ifdef __DEBUG__
   printk(KERN_WARNING "====================================================\n");
   printk(KERN_WARNING "====================================================\n");
   printk(KERN_WARNING "                Device released\n");
   printk(KERN_WARNING "====================================================\n");
   printk(KERN_WARNING "====================================================\n");
-#endif
+
 }
 
 static int usbcam_probe(struct usb_interface *interface, const struct usb_device_id *devid)
 {
   struct usbcam_dev *dev = NULL;
-  struct usb_host_interface *iface_desc;
-  struct usb_endpoint_descriptor *endpoint;
-  size_t buffer_size;
-  int i;
   int retval = -ENOMEM;
+
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "             Device enter in PROBE\n");
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "====================================================\n");
 
   /* allocate memory for our device state and initialize it */
   dev = kmalloc(sizeof(struct usbcam_dev), GFP_KERNEL);
   if(dev == NULL)
   {
     printk(KERN_WARNING "Out of memory");
-    goto error;
+    return retval;
   }
   memset(dev, 0x00, sizeof(*dev));
-  kref_init(&dev->kref);
 
-  dev->usbdev = usb_get_dev(interface_to_usbdev(interface));
-  dev->usbinterfaces = interface;
-
-  /* set up the endpoint information */
-  /* use only the first bulk-in and bulk-out endpoints */
-  iface_desc = interface->cur_altsetting;
-  for (i = 0; i < iface_desc->desc.bNumEndpoints; ++i)
+  if (interface->altsetting->desc.bInterfaceClass == CC_VIDEO)
   {
-    endpoint = &iface_desc->endpoint[i].desc;
-
-    if (!dev->bulk_in_endpointAddr && (endpoint->bEndpointAddress & USB_DIR_IN) && ((endpoint->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_BULK))
+    if (interface->altsetting->desc.bInterfaceSubClass == SC_VIDEOCONTROL)
+      return 0;
+    if (interface->altsetting->desc.bInterfaceSubClass == SC_VIDEOSTREAMING)
     {
-      /* we found a bulk in endpoint */
-      buffer_size = endpoint->wMaxPacketSize;
-      dev->bulk_in_size = buffer_size;
-      dev->bulk_in_endpointAddr = endpoint->bEndpointAddress;
-      dev->bulk_in_buffer = kmalloc(buffer_size, GFP_KERNEL);
-      if (!dev->bulk_in_buffer)
+      dev->udev = usb_get_dev(interface_to_usbdev(interface));
+
+      usb_set_intfdata(interface, dev);
+
+      retval = usb_register_dev(interface, &usbcam_class);
+      if (retval)
       {
-        printk(KERN_WARNING "Could not allocate bulk_in_buffer");
-        goto error;
+        /* something prevented us from registering this driver */
+        printk(KERN_WARNING"Not able to get a minor for this device.");
+        usb_set_intfdata(interface, NULL);
       }
+
+      usb_set_interface(dev->udev, 1, 4);
     }
-
-    if (!dev->bulk_out_endpointAddr && !(endpoint->bEndpointAddress & USB_DIR_IN) && ((endpoint->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_BULK))
-    {
-      /* we found a bulk out endpoint */
-      dev->bulk_out_endpointAddr = endpoint->bEndpointAddress;
-    }
-  }
-  if (!(dev->bulk_in_endpointAddr && dev->bulk_out_endpointAddr))
-  {
-    printk(KERN_WARNING "Could not find both bulk-in and bulk-out endpoints");
-    goto error;
-  }
-
-  /* save our data pointer in this interface device */
-  usb_set_intfdata(interface, dev);
-
-  /* we can register the device now, as it is ready */
-  retval = usb_register_dev(interface, &usbcam_class);
-  if (retval)
-  {
-    /* something prevented us from registering this driver */
-    printk(KERN_WARNING"Not able to get a minor for this device.");
-    usb_set_intfdata(interface, NULL);
-    goto error;
   }
 
   /* let the user know what node this device is now attached to */
   printk(KERN_WARNING "usbcam device now attached to usbcam-%d", interface->minor);
   return 0;
-
-  error:
-  if (dev)
-    kref_put(&dev->kref, usbcam_delete);
-
-  return retval;
 }
 
 void usbcam_disconnect(struct usb_interface *interface)
@@ -164,20 +111,19 @@ void usbcam_disconnect(struct usb_interface *interface)
   struct usbcam_dev *dev;
   int minor = interface->minor;
 
-  sema_init(&dev.usbSem, 1);
+  if (interface->altsetting->desc.bInterfaceClass == CC_VIDEO)
+  {
+    if (interface->altsetting->desc.bInterfaceSubClass == SC_VIDEOSTREAMING)
+    {
+      dev = usb_get_intfdata(interface);
+      usb_set_intfdata(interface, NULL);
 
-  if(down_interruptible(&dev->usbSem))
+      usb_deregister_dev(interface, &usbcam_class);
 
-  dev = usb_get_intfdata(interface);
-  usb_set_intfdata(interface, NULL);
-
-  /* give back our minor */
-  usb_deregister_dev(interface, &usbcam_class);
-
-  up(&dev->usbSem);
-
-  /* decrement our usage count */
-  kref_put(&dev->kref, usbcam_delete);
+      kfree(dev);
+      dev = NULL;
+    }
+  }
 
   printk(KERN_WARNING "usbcam-%d now disconnected", minor);
 }
@@ -206,9 +152,6 @@ int usbcam_open(struct inode *inode, struct file *filp)
     goto exit;
   }
 
-  /* increment our usage count for the device */
-  kref_get(&dev->kref);
-
   /* save our object in the file's private structure */
   filp->private_data = dev;
 
@@ -224,15 +167,31 @@ int usbcam_release(struct inode *inode, struct file *filp)
   if (dev == NULL)
     return -ENODEV;
 
-  /* decrement the count on our device */
-  kref_put(&dev->kref, usbcam_delete);
+  kfree(dev);
+  dev = NULL;
+
   return 0;
 }
 
 ssize_t usbcam_read(struct file *filp, char __user *ubuf, size_t count, loff_t *f_ops)
 {
+  struct usbcam_dev *dev;
+  int retval = 0;
 
-  return 0;
+  dev = (struct usbcam_dev *)filp->private_data;
+
+  wait_for_completion(&submit_urb);
+
+  if (copy_to_user(ubuf, myData, count))
+			retval = -EFAULT;
+  else
+			retval = count;
+
+  usb_kill_urb(&myUrb);
+  //usb_free_coherent(dev->udev, count, void *addr, myUrb->transfer_buffer);
+  usb_free_urb(&myUrb);
+
+  return retval;
 }
 
 ssize_t usbcam_write(struct file *filp, const char __user *ubuf, size_t count, loff_t *f_ops)
@@ -243,8 +202,53 @@ ssize_t usbcam_write(struct file *filp, const char __user *ubuf, size_t count, l
 
 long usbcam_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
+  struct usb_interface *intf = file->private_data;
+  struct usb_device *dev = usb_get_intfdata(intf);
+	struct usb_host_interface *iface_desc;
+	struct usb_endpoint_descriptor *endpoint;
+  unsigned char direction;
+  unsigned char request_stream = 0x0B;
+  unsigned char request_tilt = 0x01;
+  unsigned short value_stream_on = 0x0004;
+  unsigned short value_stream_off = 0x0000;
+  unsigned short value_pantilt = 0x0100;
+  unsigned short value_pantilt_reset = 0x0200; 
+  unsigned short index_stream = 0x0001; 
+  unsigned short index_tilt = 0x0900;
 
-  return 0;
+  int retval = 0;
+
+  iface_desc = interface->cur_altsetting;
+  endpoint = &iface_desc->endpoint.desc;
+
+  switch(cmd){
+  case IOCTL_STREAMON:
+    usb_control_msg(dev, usb_sndctrlpipe(dev, endpoint->bEndpointAddress), request_stream,
+                    USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_INTERFACE, value_stream_on,
+                    index_stream, NULL, 0, 0);  
+    break;
+  case IOCTL_STREAMOFF:
+    usb_control_msg(dev, usb_sndctrlpipe(dev, endpoint->bEndpointAddress), request_stream,
+                    USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_INTERFACE, value_stream_off,
+                    index_stream, NULL, 0, 0);  
+    break;
+  case IOCTL_PANTILT:
+    retval = __get_user(direction, (unsigned char __user *)arg);
+    usb_control_msg(dev, usb_sndctrlpipe(dev, endpoint->bEndpointAddress), request_tilt,
+                    USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt,
+                    index_tilt, direction, 4, 0);  
+    break;
+  case IOCTL_PANTILT:
+    usb_control_msg(dev, usb_sndctrlpipe(dev, endpoint->bEndpointAddress), request_tilt,
+                    USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt_reset,
+                    index_tilt, 0x03, 1, 0);  
+    break;
+  default:
+    retval =  -ENOTTY;
+    break;
+  }
+
+  return retval;
 }
 
 module_init(usbcam_init);
@@ -254,117 +258,133 @@ module_exit(usbcam_exit);
 // **** Private functions **** //
 // *************************** //
 
-/* FIXME: REMOVE THIS LINE
+int urbInit(struct urb *urb, struct usb_interface *intf) 
+{
+  int i, j, ret, nbPackets, myPacketSize, size, nbUrbs;
+  struct usb_host_interface *cur_altsetting = intf->cur_altsetting;
+  struct usb_endpoint_descriptor endpointDesc = cur_altsetting->endpoint[0].desc;
+  struct usbcam_dev *dev;
 
-int urbInit(struct urb *urb, struct usb_interface *intf) {
-    int i, j, ret, nbPackets, myPacketSize, size, nbUrbs;
-    struct usb_host_interface *cur_altsetting = intf->cur_altsetting;
-    struct usb_endpoint_descriptor endpointDesc = cur_altsetting->endpoint[0].desc;
+  nbPackets = 40;  // The number of isochronous packets this urb should contain
+  myPacketSize = le16_to_cpu(endpointDesc.wMaxPacketSize);
+  size = myPacketSize * nbPackets;
+  nbUrbs = 5;
 
-    nbPackets = 40;  // The number of isochronous packets this urb should contain
-    myPacketSize = le16_to_cpu(endpointDesc.wMaxPacketSize);
-    size = myPacketSize * nbPackets;
-    nbUrbs = 5;
-
-    for (i = 0; i < nbUrbs; ++i) {
-        // TODO: usb_free_urb(...);
-        // TODO: myUrb[i] = usb_alloc_urb(...);
-        if (myUrb[i] == NULL) {
-            // TODO: printk(KERN_WARNING "");
-            return -ENOMEM;
-        }
-
-        // TODO: myUrb[i]->transfer_buffer = usb_buffer_alloc(...);
-
-        if (myUrb[i]->transfer_buffer == NULL) {
-            // printk(KERN_WARNING "");
-            usb_free_urb(myUrb[i]);
-            return -ENOMEM;
-        }
-
-        // TODO: myUrb[i]->dev = ...
-        // TODO: myUrb[i]->context = *dev*;
-        // TODO: myUrb[i]->pipe = usb_rcvisocpipe(*dev*, endpointDesc.bEndpointAddress);
-        myUrb[i]->transfer_flags = URB_ISO_ASAP | URB_NO_TRANSFER_DMA_MAP;
-        myUrb[i]->interval = endpointDesc.bInterval;
-        // TODO: myUrb[i]->complete = ...
-        // TODO: myUrb[i]->number_of_packets = ...
-        // TODO: myUrb[i]->transfer_buffer_length = ...
-
-        for (j = 0; j < nbPackets; ++j) {
-            myUrb[i]->iso_frame_desc[j].offset = j * myPacketSize;
-            myUrb[i]->iso_frame_desc[j].length = myPacketSize;
-        }
+  for (i = 0; i < nbUrbs; ++i)
+  {
+    usb_free_urb(&urb);
+    myUrb[i] = usb_alloc_urb(nbPackets, GFP_KERNEL);
+    if (myUrb[i] == NULL)
+    {
+      printk(KERN_WARNING "urb #%d can't alloc", i);
+      return -ENOMEM;
     }
 
-    for(i = 0; i < nbUrbs; i++){
-        // TODO: if ((ret = usb_submit_urb(...)) < 0) {
-            // TODO: printk(KERN_WARNING "");
-            return ret;
-        }
+    dev->udev = usb_get_intfdata(intf);
+
+    myUrb[i]->transfer_buffer = usb_alloc_coherent(dev->udev, size, GFP_KERNEL, &urb->transfer_dma);
+    if (myUrb[i]->transfer_buffer == NULL)
+    {
+      printk(KERN_WARNING "Can't alloc urb #%d", i);
+      usb_free_coherent(dev->udev, size, endpointDesc.bEndpointAddress, &urb->transfer_dma);
+      return -ENOMEM;
     }
-    return 0;
+
+    myUrb[i]->dev = dev->udev;
+    myUrb[i]->context = dev;
+    myUrb[i]->pipe = usb_rcvisocpipe(dev, endpointDesc.bEndpointAddress);
+    myUrb[i]->transfer_flags = URB_ISO_ASAP | URB_NO_TRANSFER_DMA_MAP;
+    myUrb[i]->interval = endpointDesc.bInterval;
+    myUrb[i]->complete = urbCompletionCallback;
+    myUrb[i]->number_of_packets = nbPackets;
+    myUrb[i]->transfer_buffer_length = size;
+
+    for (j = 0; j < nbPackets; ++j) 
+    {
+      myUrb[i]->iso_frame_desc[j].offset = j * myPacketSize;
+      myUrb[i]->iso_frame_desc[j].length = myPacketSize;
+    }
+  }
+
+  for(i = 0; i < nbUrbs; ++i)
+  {
+    if ((ret = usb_submit_urb(myUrb[i], GFP_KERNEL)) < 0)
+    {
+      printk(KERN_WARNING "failed submitting write urb, error %d", ret);
+      return ret;
+    }
+  }
+  return 0;
 }
 
 
-static void urbCompletionCallback(struct urb *urb) {
-    int ret;
-    int i;
-    unsigned char * data;
-    unsigned int len;
-    unsigned int maxlen;
-    unsigned int nbytes;
-    void * mem;
+static void urbCompletionCallback(struct urb *urb) 
+{
+  int ret;
+  int i;
+  unsigned char *data;
+  unsigned int len;
+  unsigned int maxlen;
+  unsigned int nbytes;
+  void *mem;
 
-    if(urb->status == 0){
+  if (urb->status == 0)
+  {
+    for (i = 0; i < urb->number_of_packets; ++i)
+   {
+      if (myStatus == 1)
+      {
+        continue;
+      }
+      if (urb->iso_frame_desc[i].status < 0)
+      {
+        continue;
+      }
 
-        for (i = 0; i < urb->number_of_packets; ++i) {
-            if(myStatus == 1){
-                continue;
-            }
-            if (urb->iso_frame_desc[i].status < 0) {
-                continue;
-            }
+      data = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
+      if(data[1] & (1 << 6))
+      {
+        continue;
+      }
+      len = urb->iso_frame_desc[i].actual_length;
+      if (len < 2 || data[0] < 2 || data[0] > len)
+      {
+        continue;
+      }
 
-            data = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
-            if(data[1] & (1 << 6)){
-                continue;
-            }
-            len = urb->iso_frame_desc[i].actual_length;
-            if (len < 2 || data[0] < 2 || data[0] > len){
-                continue;
-            }
+      len -= data[0];
+      maxlen = myLength - myLengthUsed;
+      mem = myData + myLengthUsed;
+      nbytes = min(len, maxlen);
+      memcpy(mem, data + data[0], nbytes);
+      myLengthUsed += nbytes;
 
-            len -= data[0];
-            maxlen = myLength - myLengthUsed ;
-            mem = myData + myLengthUsed;
-            nbytes = min(len, maxlen);
-            memcpy(mem, data + data[0], nbytes);
-            myLengthUsed += nbytes;
+      if (len > maxlen) 
+      {
+        myStatus = 1; // DONE
+      }
 
-            if (len > maxlen) {
-                myStatus = 1; // DONE
-            }
-
-            // Mark the buffer as done if the EOF marker is set.
-            if ((data[1] & (1 << 1)) && (myLengthUsed != 0)) {
-                myStatus = 1; // DONE
-            }
-        }
-
-        if (!(myStatus == 1)){
-            if ((ret = usb_submit_urb(urb, GFP_ATOMIC)) < 0) {
-                // TODO: printk(KERN_WARNING "");
-            }
-        } else {
-            ///////////////////////////////////////////////////////////////////////
-            //  Synchronisation
-            ///////////////////////////////////////////////////////////////////////
-            //TODO
-        }
-    } else {
-        // TODO: printk(KERN_WARNING "");
+      // Mark the buffer as done if the EOF marker is set.
+      if ((data[1] & (1 << 1)) && (myLengthUsed != 0)) 
+      {
+        myStatus = 1; // DONE
+      }
     }
-}
 
-FIXME: REMOVE THIS LINE*/
+    if (!(myStatus == 1))
+    {
+      if ((ret = usb_submit_urb(urb, GFP_ATOMIC)) < 0) 
+      {
+        printk(KERN_WARNING "failed submitting write urb, error %d", ret);
+      }
+    } 
+    else 
+    {
+      complete(&submit_urb);
+    }
+  } 
+  else
+  {
+    printk(KERN_WARNING "Error, urb status = %d", urb->status);
+  }
+}
