@@ -9,6 +9,7 @@
 #include "usbcam.h"
 #include "usbvideo.h"
 #include "dht_data.h"
+#include "cmd.h"
 
 // Module Information
 MODULE_AUTHOR("Francis Masse, Alexandre Leblanc");
@@ -34,7 +35,7 @@ static int __init usbcam_init(void)
   result = usb_register(&usbcam_driver);
 
   if(result)
-    printk(KERN_WARNING "usb_register failed. Error number %d", result);
+    printk(KERN_WARNING "usb_register failed. Error number %d\n", result);
 
   init_completion(&submit_urb);
 
@@ -74,7 +75,7 @@ static int usbcam_probe(struct usb_interface *intf, const struct usb_device_id *
   dev = kmalloc(sizeof(struct usbcam_dev), GFP_KERNEL);
   if(dev == NULL)
   {
-    printk(KERN_WARNING "Out of memory");
+    printk(KERN_WARNING "Out of memory\n");
     return retval;
   }
   memset(dev, 0x00, sizeof(*dev));
@@ -94,7 +95,7 @@ static int usbcam_probe(struct usb_interface *intf, const struct usb_device_id *
       if (retval)
       {
         /* something prevented us from registering this driver */
-        printk(KERN_WARNING"Not able to get a minor for this device.");
+        printk(KERN_WARNING"Not able to get a minor for this device.\n");
         usb_set_intfdata(intf, NULL);
       }
 
@@ -103,7 +104,7 @@ static int usbcam_probe(struct usb_interface *intf, const struct usb_device_id *
   }
 
   /* let the user know what node this device is now attached to */
-  printk(KERN_WARNING "usbcam device now attached to usbcam-%d", intf->minor);
+  printk(KERN_WARNING "usbcam device now attached to usbcam-%d\n", intf->minor);
   return 0;
 }
 
@@ -111,6 +112,12 @@ void usbcam_disconnect(struct usb_interface *intf)
 {
   struct usbcam_dev *dev;
   int minor = intf->minor;
+
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "             Device enter in DISCONNECT\n");
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "====================================================\n");
 
   if (intf->altsetting->desc.bInterfaceClass == CC_VIDEO)
   {
@@ -123,30 +130,36 @@ void usbcam_disconnect(struct usb_interface *intf)
 
       kfree(dev);
       dev = NULL;
+
+      printk(KERN_WARNING "usbcam-%d now disconnected\n", minor);
     }
   }
-
-  printk(KERN_WARNING "usbcam-%d now disconnected", minor);
 }
 
 int usbcam_open(struct inode *inode, struct file *filp)
 {
-  struct usbcam_dev *dev;
+  struct usbcam_dev *dev = NULL;
   int subminor;
   int retval = 0;
+
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "             Device enter in OPEN\n");
+  printk(KERN_WARNING "====================================================\n");
+  printk(KERN_WARNING "====================================================\n");
 
   subminor = iminor(inode);
 
   dev->interface = usb_find_interface(&usbcam_driver, subminor);
   if(dev->interface == NULL)
   {
-    printk(KERN_WARNING "%s - error, can't find device for minor %d", __FUNCTION__, subminor);
+    printk(KERN_WARNING "%s - error, can't find device for minor %d\n", __FUNCTION__, subminor);
     retval = -ENODEV;
     goto exit;
   }
 
-  dev = usb_get_intfdata(dev->interface);
-  if(dev == NULL)
+  dev->udev = interface_to_usbdev(dev->interface);
+  if(dev->udev == NULL)
   {
     retval = -ENODEV;
     goto exit;
@@ -163,7 +176,7 @@ int usbcam_open(struct inode *inode, struct file *filp)
 
 int usbcam_release(struct inode *inode, struct file *filp)
 {
-  struct usbcam_dev *dev;
+  struct usbcam_dev *dev = NULL;
 
   dev = (struct usbcam_dev *)filp->private_data;
   if (dev == NULL)
@@ -180,6 +193,8 @@ ssize_t usbcam_read(struct file *filp, char __user *ubuf, size_t count, loff_t *
   struct usbcam_dev *dev;
   struct usb_host_interface *cur_altsetting;
   struct usb_endpoint_descriptor endpointDesc;
+  int i = 0;
+  int nbUrbs = 5;
   int retval = 0;
 
   dev = (struct usbcam_dev *)filp->private_data;
@@ -194,10 +209,12 @@ ssize_t usbcam_read(struct file *filp, char __user *ubuf, size_t count, loff_t *
   else
 			retval = count;
 
-
-  usb_kill_urb(&myUrb);
-  usb_free_coherent(dev->udev, count, endpointDesc.bEndpointAddress, myUrb->transfer_buffer);
-  usb_free_urb(&myUrb);
+  for(i = 0; i < nbUrbs; ++i)
+  {
+    usb_kill_urb(myUrb[i]);
+    usb_free_coherent(dev->udev, count, &endpointDesc.bEndpointAddress, myUrb[i]->transfer_buffer_length);
+    usb_free_urb(myUrb[i]);
+  }
 
   return retval;
 }
@@ -210,12 +227,14 @@ ssize_t usbcam_write(struct file *filp, const char __user *ubuf, size_t count, l
 
 long usbcam_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-  struct usb_device *dev = (struct usbcam_dev *)file->private_data;
+  struct usbcam_dev *dev = (struct usbcam_dev *)filp->private_data;
 	struct usb_host_interface *iface_desc;
 	struct usb_endpoint_descriptor *endpoint;
-  unsigned char direction;
+  int error = 0;
+  unsigned char direction = 0;
   unsigned char request_stream = 0x0B;
   unsigned char request_tilt = 0x01;
+  unsigned char data_pantilt_reset = 0x03;
   unsigned short value_stream_on = 0x0004;
   unsigned short value_stream_off = 0x0000;
   unsigned short value_pantilt = 0x0100;
@@ -226,31 +245,45 @@ long usbcam_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
   int retval = 0;
 
   iface_desc = dev->interface->cur_altsetting;
-  endpoint = &iface_desc->endpoint.desc;
+  endpoint = &iface_desc->endpoint->desc;
+
+  if(_IOC_TYPE(cmd) != USBCAM_IOC_MAGIC)
+    return -ENOTTY;
+  if(_IOC_NR(cmd) > USBCAM_IOC_MAGIC)
+    return -ENOTTY;
+
+  if(_IOC_DIR(cmd) & _IOC_READ)
+    error = !access_ok(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
+  else if(_IOC_DIR(cmd) & _IOC_WRITE)
+    error =  !access_ok(VERIFY_READ, (void __user *)arg, _IOC_SIZE(cmd));
+  if(error)
+    return -EFAULT;
 
   switch(cmd){
-  case IOCTL_STREAMON:
-    usb_control_msg(dev, usb_sndctrlpipe(dev, endpoint->bEndpointAddress), request_stream,
+  case USBCAM_IOCTL_STREAMON:
+    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, endpoint->bEndpointAddress), request_stream,
                     USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_INTERFACE, value_stream_on,
                     index_stream, NULL, 0, 0);  
     break;
-  case IOCTL_STREAMOFF:
-    usb_control_msg(dev, usb_sndctrlpipe(dev, endpoint->bEndpointAddress), request_stream,
+  case USBCAM_IOCTL_STREAMOFF:
+    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, endpoint->bEndpointAddress), request_stream,
                     USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_INTERFACE, value_stream_off,
                     index_stream, NULL, 0, 0);  
     break;
-  case IOCTL_GRAB:
-    urbInit(&myUrb, dev->interface);
-  case IOCTL_PANTILT:
-    retval = __get_user(direction, (unsigned char __user *)arg);
-    usb_control_msg(dev, usb_sndctrlpipe(dev, endpoint->bEndpointAddress), request_tilt,
-                    USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt,
-                    index_tilt, direction, 4, 0);  
+  case USBCAM_IOCTL_GRAB:
+    urbInit(*myUrb, dev->interface);
     break;
-  case IOCTL_PANTILT:
-    usb_control_msg(dev, usb_sndctrlpipe(dev, endpoint->bEndpointAddress), request_tilt,
+  case USBCAM_IOCTL_PANTILT:
+    retval = __get_user(direction, (unsigned char __user *)arg);
+    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, endpoint->bEndpointAddress), request_tilt,
+                    USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt,
+                    index_tilt, &direction, 4, 0);
+    break;
+  case USBCAM_IOCTL_PANTILT_RESET:
+    printk(KERN_WARNING "IOCTL_PANTILT_RESET\n");
+    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, endpoint->bEndpointAddress), request_tilt,
                     USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt_reset,
-                    index_tilt, 0x03, 1, 0);  
+                    index_tilt, &data_pantilt_reset, 1, 0);
     break;
   default:
     retval =  -ENOTTY;
@@ -272,7 +305,7 @@ int urbInit(struct urb *urb, struct usb_interface *intf)
   int i, j, ret, nbPackets, myPacketSize, size, nbUrbs;
   struct usb_host_interface *cur_altsetting = intf->cur_altsetting;
   struct usb_endpoint_descriptor endpointDesc = cur_altsetting->endpoint[0].desc;
-  struct usbcam_dev *dev;
+  struct usbcam_dev *dev = NULL;
 
   nbPackets = 40;  // The number of isochronous packets this urb should contain
   myPacketSize = le16_to_cpu(endpointDesc.wMaxPacketSize);
@@ -281,11 +314,11 @@ int urbInit(struct urb *urb, struct usb_interface *intf)
 
   for (i = 0; i < nbUrbs; ++i)
   {
-    usb_free_urb(&myUrb[i]);
+    usb_free_urb(myUrb[i]);
     myUrb[i] = usb_alloc_urb(nbPackets, GFP_KERNEL);
     if (myUrb[i] == NULL)
     {
-      printk(KERN_WARNING "urb #%d can't alloc", i);
+      printk(KERN_WARNING "urb #%d can't alloc\n", i);
       return -ENOMEM;
     }
 
@@ -294,14 +327,14 @@ int urbInit(struct urb *urb, struct usb_interface *intf)
     myUrb[i]->transfer_buffer = usb_alloc_coherent(dev->udev, size, GFP_KERNEL, &myUrb[i]->transfer_dma);
     if (myUrb[i]->transfer_buffer == NULL)
     {
-      printk(KERN_WARNING "Can't alloc urb #%d", i);
-      usb_free_coherent(dev->udev, size, endpointDesc.bEndpointAddress, &myUrb[i]->transfer_dma);
+      printk(KERN_WARNING "Can't alloc urb #%d\n", i);
+      usb_free_coherent(dev->udev, size, &endpointDesc.bEndpointAddress, myUrb[i]->transfer_dma);
       return -ENOMEM;
     }
 
     myUrb[i]->dev = dev->udev;
     myUrb[i]->context = dev;
-    myUrb[i]->pipe = usb_rcvisocpipe(dev, endpointDesc.bEndpointAddress);
+    myUrb[i]->pipe = usb_rcvisocpipe(dev->udev, endpointDesc.bEndpointAddress);
     myUrb[i]->transfer_flags = URB_ISO_ASAP | URB_NO_TRANSFER_DMA_MAP;
     myUrb[i]->interval = endpointDesc.bInterval;
     myUrb[i]->complete = urbCompletionCallback;
@@ -319,7 +352,7 @@ int urbInit(struct urb *urb, struct usb_interface *intf)
   {
     if ((ret = usb_submit_urb(myUrb[i], GFP_KERNEL)) < 0)
     {
-      printk(KERN_WARNING "failed submitting write urb, error %d", ret);
+      printk(KERN_WARNING "failed submitting write urb, error %d\n", ret);
       return ret;
     }
   }
@@ -384,7 +417,7 @@ static void urbCompletionCallback(struct urb *urb)
     {
       if ((ret = usb_submit_urb(urb, GFP_ATOMIC)) < 0) 
       {
-        printk(KERN_WARNING "failed submitting write urb, error %d", ret);
+        printk(KERN_WARNING "failed submitting write urb, error %d\n", ret);
       }
     } 
     else 
@@ -394,6 +427,6 @@ static void urbCompletionCallback(struct urb *urb)
   } 
   else
   {
-    printk(KERN_WARNING "Error, urb status = %d", urb->status);
+    printk(KERN_WARNING "Error, urb status = %d\n", urb->status);
   }
 }
