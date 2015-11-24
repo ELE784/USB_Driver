@@ -15,8 +15,6 @@
 MODULE_AUTHOR("Francis Masse, Alexandre Leblanc");
 MODULE_LICENSE("Dual BSD/GPL");
 
-#define DEVICE_NAME "etsele_cdev"
-
 // Helper function
 static int urbInit(struct urb *urb, struct usb_interface *intf);
 static void urbCompletionCallback(struct urb *urb);
@@ -231,7 +229,11 @@ long usbcam_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	struct usb_host_interface *iface_desc;
 	struct usb_endpoint_descriptor *endpoint;
   int error = 0;
-  unsigned char direction = 0;
+  unsigned int direction;
+  unsigned char direction_haut[4] = {0x00, 0x00, 0x80, 0xFF};
+  unsigned char direction_bas[4] = {0x00, 0x00, 0x80, 0x00};
+  unsigned char direction_gauche[4] = {0x80, 0x00, 0x00, 0x00};
+  unsigned char direction_droite[4] = {0x80, 0xFF, 0x00, 0x00};
   unsigned char request_stream = 0x0B;
   unsigned char request_tilt = 0x01;
   unsigned char data_pantilt_reset = 0x03;
@@ -261,12 +263,12 @@ long usbcam_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
   switch(cmd){
   case USBCAM_IOCTL_STREAMON:
-    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, endpoint->bEndpointAddress), request_stream,
+    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0), request_stream,
                     USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_INTERFACE, value_stream_on,
                     index_stream, NULL, 0, 0);  
     break;
   case USBCAM_IOCTL_STREAMOFF:
-    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, endpoint->bEndpointAddress), request_stream,
+    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0), request_stream,
                     USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_INTERFACE, value_stream_off,
                     index_stream, NULL, 0, 0);  
     break;
@@ -275,13 +277,26 @@ long usbcam_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     break;
   case USBCAM_IOCTL_PANTILT:
     retval = __get_user(direction, (unsigned char __user *)arg);
-    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, endpoint->bEndpointAddress), request_tilt,
-                    USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt,
-                    index_tilt, &direction, 4, 0);
+    if(direction == 1)
+      usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0), request_tilt,
+                      USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt,
+                      index_tilt, &direction_haut, 4, 0);
+    else if(direction == 2)
+      usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0), request_tilt,
+                      USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt,
+                      index_tilt, &direction_bas, 4, 0);
+    else if(direction == 3)
+      usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0), request_tilt,
+                      USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt,
+                      index_tilt, &direction_gauche, 4, 0);
+    else if(direction == 4)
+      usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0), request_tilt,
+                      USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt,
+                      index_tilt, &direction_droite, 4, 0);
     break;
   case USBCAM_IOCTL_PANTILT_RESET:
     printk(KERN_WARNING "IOCTL_PANTILT_RESET\n");
-    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, endpoint->bEndpointAddress), request_tilt,
+    usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0), request_tilt,
                     USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE, value_pantilt_reset,
                     index_tilt, &data_pantilt_reset, 1, 0);
     break;

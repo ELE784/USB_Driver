@@ -9,6 +9,11 @@
 #include "cmd.h"
 #include "dht_data.h"
 
+#define DIRECTION_HAUT      1
+#define DIRECTION_BAS       2
+#define DIRECTION_GAUCHE    3
+#define DIRECTION_DROITE    4
+
 int main()
 {
   FILE *foutput;
@@ -17,17 +22,17 @@ int main()
   unsigned char * finalBuf;
   int ret = 0;
 
-  inBuffer = malloc((42666)* sizeof(unsigned char));
-  finalBuf = malloc((42666 * 2)* sizeof(unsigned char));
-
-  if((inBuffer == NULL) || (finalBuf == NULL))
-  {
-    return -1;
-  }
+//  inBuffer = malloc((42666)* sizeof(unsigned char));
+//  finalBuf = malloc((42666 * 2)* sizeof(unsigned char));
+//
+//  if((inBuffer == NULL) || (finalBuf == NULL))
+//  {
+//    return -1;
+//  }
 
   usbcam = open("/dev/usbcam0", O_RDWR);
 
-  ret = ioctl(usbcam, USBCAM_IOCTL_PANTILT_RESET);
+  //ret = ioctl(usbcam, USBCAM_IOCTL_PANTILT_RESET);
 
   printf("ret = %d with error %d\n", ret, errno);
 
