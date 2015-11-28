@@ -44,11 +44,10 @@ static long usbcam_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 struct usbcam_dev {
   struct usb_device *udev;
-  struct usb_interface *	interface;
 };
 
 static struct usb_device_id usbcam_table[] = {
-// { USB_DEVICE(VENDOR_ID, PRODUCT_ID) },
+{ USB_DEVICE(0x046d, 0x0994) },
 { USB_DEVICE(0x046d, 0x08cc) },
 {}
 };
