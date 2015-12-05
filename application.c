@@ -11,27 +11,28 @@
 
 int main(int argc, char* argv[])
 {
-  //  FILE *foutput;
+  FILE *foutput;
   int usbcam;
   int direction_up = 1;
   int direction_down = 2;
   int direction_left = 3;
   int direction_right = 4;
-  //  unsigned char * inBuffer;
-  //  unsigned char * finalBuf;
+  unsigned char * inBuffer;
+  unsigned char * finalBuf;
+  int mySize = 0;
   int ret = 0;
 
-  //  inBuffer = malloc((42666)* sizeof(unsigned char));
-  //  finalBuf = malloc((42666 * 2)* sizeof(unsigned char));
-  //
-  //  if((inBuffer == NULL) || (finalBuf == NULL))
-  //  {
-  //    return -1;
-  //  }
+    inBuffer = malloc((42666)* sizeof(unsigned char));
+    finalBuf = malloc((42666 * 2)* sizeof(unsigned char));
+
+    if((inBuffer == NULL) || (finalBuf == NULL))
+    {
+      return -1;
+    }
 
   if (argc == 2)
   {
-    usbcam = open("/dev/usbcam0", O_RDWR);
+    usbcam = open("/dev/usbcam0", O_RDONLY);
 
     if (strcmp(argv[1], "on") == 0)
     {
@@ -68,25 +69,47 @@ int main(int argc, char* argv[])
       ret = ioctl(usbcam, USBCAM_IOCTL_PANTILT, &direction_right);
       printf("ret = %d with error %d\n", ret, errno);
     }
+    else if (strcmp(argv[1], "grab") == 0)
+    {
+      foutput = fopen("/home/bullshark/C++_workspace/image.jpg", "wb");
+
+      if(foutput != NULL)
+      {
+        ret = ioctl(usbcam, USBCAM_IOCTL_STREAMON);
+        printf("ret = %d with error %d\n", ret, errno);
+
+        ret = ioctl(usbcam, USBCAM_IOCTL_GRAB);
+        printf("ret = %d with error %d\n", ret, errno);
+
+        mySize = read(usbcam, inBuffer, 42666);
+        printf("mySize = %d\n", mySize);
+        printf("ret = %d with error %d\n", ret, errno);
+
+        ret = ioctl(usbcam, USBCAM_IOCTL_STREAMOFF);
+        printf("ret = %d with error %d\n", ret, errno);
+
+        memcpy(finalBuf, inBuffer, HEADERFRAME1);
+        memcpy(finalBuf + HEADERFRAME1, dht_data, DHT_SIZE);
+        memcpy(finalBuf + HEADERFRAME1 + DHT_SIZE, inBuffer + HEADERFRAME1, (mySize - HEADERFRAME1));
+        fwrite(finalBuf, mySize + DHT_SIZE, 1, foutput);
+        fclose(foutput);
+      }
+      else
+      {
+        printf("No file names image.jpg");
+      }
+    }
 
     close(usbcam);
+
+    free(finalBuf);
+    finalBuf = NULL;
+    free(inBuffer);
+    inBuffer = NULL;
+
   }
   else
   {
     printf("Bad argument\n");
   }
-  //foutput = fopen("/home/bullshark/C++_workspace/image.jpg", "wb");
-
-  //if(foutput != NULL)
-  //{
-  // Etape #2
-  // Etape #3
-  // Etape #4
-  // Etape #5
-  //memcpy (finalBuf, inBuffer, HEADERFRAME1);
-  //memcpy (finalBuf + HEADERFRAME1, dht_data, DHT_SIZE);
-  //memcpy (finalBuf + HEADERFRAME1 + DHT_SIZE, inBuffer + HEADERFRAME1, (mySize -HEADERFRAME1));
-  //fwrite (finalBuf, mySize + DHT_SIZE, 1, foutput);
-  //fclose(foutput);
-  //}
 }
